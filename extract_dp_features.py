@@ -7,6 +7,7 @@ import torch
 import deepmd.pt
 
 def build_parser():
+    """Define command-line arguments for reference feature extraction."""
     parser = argparse.ArgumentParser(
         description=("Extract last-layer atomic features "
                      "from a trained DeePMD PyTorch model.")
@@ -66,6 +67,7 @@ def build_parser():
     return parser
 
 def validate_args(args, parser):
+    """Validate datasets, model path, set names, and batch size."""
     if not args.model.is_file():
         parser.error(f"model file does not exist: {args.model}"
         )
@@ -111,6 +113,7 @@ def prepare_output_path(
             f"cannot create output directory: {error}"
         )
 def resolve_device(device):
+    """Resolve auto/CPU/CUDA selection to a torch.device."""
     if device == "auto":
         device = (
             "cuda"
@@ -128,6 +131,7 @@ def resolve_device(device):
     return torch.device(device)
 
 def load_model(model_path: Path, device: torch.device) -> torch.nn.Module:
+    """Load a TorchScript model and verify its last-layer hook methods."""
     print("loading model...", model_path)
 
     model = torch.jit.load(str(model_path), map_location=device)
@@ -146,6 +150,7 @@ def load_model(model_path: Path, device: torch.device) -> torch.nn.Module:
     return model
 
 def load_set_data(set_dir: Path):
+    """Load coordinates, boxes, atom types, and type names from one set."""
     coord_path = set_dir / "coord.npy"
     box_path = set_dir / "box.npy"
     type_path = set_dir.parent / "type.raw"
@@ -183,6 +188,7 @@ def parse_frames(
     frame_spec: str,
     nframes: int,
 ) -> np.ndarray:
+    """Convert a frame expression into validated integer frame indices."""
     frame_spec = frame_spec.strip()
 
     if frame_spec == "all":
@@ -252,6 +258,7 @@ def parse_frames(
     return indices
 
 def main():
+    """Extract reference matrices and save them as a compressed NPZ file."""
     parser = build_parser()
     args = parser.parse_args()
     set_dirs = validate_args(args, parser)
@@ -411,22 +418,22 @@ def main():
                     3,
                 )
 
-            # ---------- Extract last hidden-layer features ----------
+            # Expose the DeePMD fitting network's last-layer atomic
+            # representation during the forward pass.
             model.set_eval_fitting_last_layer_hook(
                 True
             )
 
             try:
-                with torch.no_grad():
-                    _ = model(
-                        coord_tensor,
-                        atype_tensor,
-                        box_tensor,
-                    )
+                _ = model(
+                    coord_tensor,
+                    atype_tensor,
+                    box_tensor,
+                )
 
-                    feature_tensor = (
-                        model.eval_fitting_last_layer()
-                    )
+                feature_tensor = (
+                    model.eval_fitting_last_layer()
+                )
             finally:
                 model.set_eval_fitting_last_layer_hook(
                     False
@@ -457,6 +464,8 @@ def main():
             ntypes = model.get_ntypes()
             hidden_dim = feature_batch.shape[-1]
 
+            # Aggregate per-atom representations by chemical type so that
+            # every configuration becomes one fixed-length feature vector.
             type_features = np.zeros(
                 (
                     current_batch_size,
@@ -517,7 +526,8 @@ def main():
             set_type_counts.shape,
         )
 
-        # Build the LLPR design matrix
+        # Build the configuration-level LLPR design matrix. Each type
+        # contributes summed hidden features and its atom count.
         design_blocks = []
 
         for type_index in range(ntypes):
@@ -618,3 +628,4 @@ def main():
     # print(args)
 if __name__ == "__main__":
     main()
+
