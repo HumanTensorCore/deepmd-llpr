@@ -1,0 +1,8 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+dp_features.npz
+dp-llpr-scores.npz
+frozen_model.pth
+all.lammpstrj
+training_data/
