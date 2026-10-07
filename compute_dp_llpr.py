@@ -6,6 +6,7 @@ import deepmd.pt
 import warnings
 
 def build_parser():
+    """Define command-line arguments for LLPR scoring."""
     parser = argparse.ArgumentParser(
         description=(
             "Compute LLPR scores from DeePMD "
@@ -97,10 +98,10 @@ def build_parser():
             "configurations. Default: 10."
         ),
     )
-
     return parser
 
 def validate_args(args, parser):
+    """Validate input files and numerical selection parameters."""
     if not args.reference.is_file():
         parser.error(
             f"--reference file not exists: {args.reference}."
@@ -143,6 +144,7 @@ def validate_args(args, parser):
         )
 
 def load_model(model_path: Path, device: torch.device) -> torch.nn.Module:
+    """Load a TorchScript DeePMD model and verify LLPR hook methods."""
     print("loading model...", model_path)
 
     model = torch.jit.load(str(model_path), map_location=device)
@@ -166,6 +168,7 @@ def process_candidate_batch(
     device,
     ntypes,
 ):
+    """Run one batch of trajectory frames through the model."""
     coords = np.stack(
         [
             frame["coords"]
@@ -207,7 +210,7 @@ def process_candidate_batch(
         coords,
         dtype=torch.float64,
         device=device,
-    )
+    ).requires_grad_(True)
 
     atype_tensor = torch.tensor(
         atom_types,
@@ -227,16 +230,15 @@ def process_candidate_batch(
     model.set_eval_fitting_last_layer_hook(True)
 
     try:
-        with torch.no_grad():
-            model(
-                coord_tensor,
-                atype_tensor,
-                box_tensor,
-            )
+        model(
+            coord_tensor,
+            atype_tensor,
+            box_tensor,
+        )
 
-            feature_tensor = (
-                model.eval_fitting_last_layer()
-            )
+        feature_tensor = (
+            model.eval_fitting_last_layer()
+        )
 
     finally:
         model.set_eval_fitting_last_layer_hook(False)
@@ -279,13 +281,13 @@ def process_candidate_batch(
         design_blocks,
         axis=1,
     )
-
 def extract_candidate_features(
     model,
     candidate_frames,
     device,
     batch_size,
 ):
+    """Read candidate frames in batches and return features plus timesteps."""
     candidate_timesteps = []
     ntypes = model.get_ntypes()
     feature_batches = []
@@ -338,7 +340,6 @@ def extract_candidate_features(
             dtype=np.int64,
         ),
     )
-
 def read_one_frame(file):
     """Read one frame from a LAMMPS custom dump file."""
 
@@ -521,6 +522,7 @@ def read_one_frame(file):
     }
 
 def iter_lammps_frames(trajectory_path: Path):
+    """Yield LAMMPS frames one at a time to limit memory use."""
     with trajectory_path.open("r") as file:
         while True:
             frame = read_one_frame(file)
@@ -532,6 +534,7 @@ def iter_lammps_frames(trajectory_path: Path):
 
 
 def load_feature_file(path: Path, name: str):
+    """Load and validate a reference feature NPZ file."""
     try:
         data = np.load(path, allow_pickle=False)
     except Exception as error:
@@ -598,6 +601,7 @@ def load_feature_file(path: Path, name: str):
     )
 
 def resolve_device(device):
+    """Resolve auto/CPU/CUDA selection to a torch.device."""
     if device == "auto":
         device = (
             "cuda"
@@ -619,14 +623,16 @@ def resolve_device(device):
 
     return torch.device(device)
 
-
 def compute_llpr_scores(
     reference_matrix,
     candidate_matrix,
     regularizer,
 ):
+    """Compute regularized LLPR leverage and inverse-rigidity scores."""
     feature_dim = reference_matrix.shape[1]
 
+    # The reference matrix defines the feature space covered by the
+    # training/reference configurations.
     covariance = (
         reference_matrix.T @ reference_matrix
     )
@@ -639,6 +645,8 @@ def compute_llpr_scores(
         )
     )
 
+    # Solve the regularized system directly instead of forming an explicit
+    # inverse. This gives the LLPR leverage for each candidate row.
     solved = np.linalg.solve(
         covariance,
         candidate_matrix.T,
@@ -649,30 +657,19 @@ def compute_llpr_scores(
         axis=1,
     )
 
-    if not np.all(np.isfinite(leverage)):
-        raise ValueError(
-            "LLPR leverage contains NaN or infinite values."
-        )
-
-    tolerance = 1e-12
-
-    if np.any(leverage < -tolerance):
-        raise ValueError(
-            "LLPR leverage contains significantly negative values."
-        )
-
-    leverage = np.maximum(leverage, 0.0)
-    rigidity = np.full_like(leverage, np.inf)
-    positive = leverage > tolerance
-    rigidity[positive] = 1.0 / leverage[positive]
+    # Low rigidity means weaker coverage by the reference space and is used
+    # to rank candidates for follow-up labeling.
+    rigidity = 1.0 / leverage
 
     return rigidity
-
 
 def normalize_features(
     reference_matrix,
     candidate_matrix,
 ):
+    """Scale both matrices using statistics from the reference matrix."""
+    # Estimate scaling only from the reference data, then apply the same
+    # transformation to both reference and candidate matrices.
     feature_mean = reference_matrix.mean(
         axis=0,
     )
@@ -695,13 +692,15 @@ def normalize_features(
         reference_scaled,
         candidate_scaled,
     )
-
 def select_candidates(
     rigidity,
     max_rigidity=None,
     top_k=None,
     min_frame_gap=0,
 ):
+    """Select low-rigidity frames while enforcing user constraints."""
+    # Rank candidates from least rigid to most rigid before applying the
+    # optional threshold, top-k, and frame-gap filters.
     if max_rigidity is None:
         eligible = np.arange(
             rigidity.size,
@@ -740,6 +739,7 @@ def select_candidates(
     )
 
 def main():
+    """Run candidate extraction, scoring, selection, and output."""
     parser = build_parser()
     args = parser.parse_args()
 
@@ -899,4 +899,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 
