@@ -279,7 +279,7 @@ def process_candidate_batch(
         design_blocks,
         axis=1,
     )
-#处理单帧dump，我要看一下
+
 def extract_candidate_features(
     model,
     candidate_frames,
@@ -338,7 +338,7 @@ def extract_candidate_features(
             dtype=np.int64,
         ),
     )
-#处理dump，我要看一下
+
 def read_one_frame(file):
     """Read one frame from a LAMMPS custom dump file."""
 
@@ -619,7 +619,7 @@ def resolve_device(device):
 
     return torch.device(device)
 
-#计算llpr，我要看一下
+
 def compute_llpr_scores(
     reference_matrix,
     candidate_matrix,
@@ -668,7 +668,7 @@ def compute_llpr_scores(
 
     return rigidity
 
-#归一化，我要看一下
+
 def normalize_features(
     reference_matrix,
     candidate_matrix,
@@ -695,7 +695,7 @@ def normalize_features(
         reference_scaled,
         candidate_scaled,
     )
-#筛选函数，我需要看一下
+
 def select_candidates(
     rigidity,
     max_rigidity=None,
